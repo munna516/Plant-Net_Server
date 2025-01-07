@@ -52,6 +52,7 @@ async function run() {
     const db = client.db("Plant-Net");
     const usersCollection = db.collection("users");
     const plantsCollection = db.collection("plants");
+    const ordersCollection = db.collection("orders");
 
     // Generate jwt token
     app.post("/jwt", async (req, res) => {
@@ -107,6 +108,96 @@ async function run() {
     // Get All Plant from DB
     app.get("/plants", async (req, res) => {
       const result = await plantsCollection.find().toArray();
+      res.send(result);
+    });
+
+    // Get a plant by id
+    app.get("/plant/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await plantsCollection.findOne(query);
+      res.send(result);
+    });
+
+    // Save order data in DB
+    app.post("/order", async (req, res) => {
+      const orderInfo = req.body;
+      const result = await ordersCollection.insertOne(orderInfo);
+      res.send(result);
+    });
+    // Manage Quantity
+    app.patch("/plants/quantity/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const { quantityToUpdate, status } = req.body;
+      const filter = { _id: new ObjectId(id) };
+      let updateDoc = {
+        $inc: { quantity: -quantityToUpdate },
+      };
+      if (status === "increase") {
+        updateDoc = {
+          $inc: { quantity: quantityToUpdate },
+        };
+      }
+      const result = await plantsCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
+
+    // Get all customer orders for a specific users
+    app.get("/customer-orders/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const query = { "customer.email": email };
+      const result = await ordersCollection
+        .aggregate([
+          {
+            $match: query, // Match specific data by email
+          },
+          {
+            $addFields: {
+              plantId: { $toObjectId: "$plantId" }, // convert  plantId (string) to object id
+            },
+          },
+          {
+            // Go to another collection for look data
+            $lookup: {
+              from: "plants",
+              localField: "plantId",
+              foreignField: "_id",
+              as: "plant",
+            },
+          },
+          {
+            $unwind: "$plant", // To remove the array
+          },
+          {
+            // Add this field only in order object
+            $addFields: {
+              name: "$plant.name",
+              image: "$plant.image",
+              category: "$plant.category",
+            },
+          },
+          {
+            // remove plant object only
+            $project: {
+              plant: 0,
+            },
+          },
+        ])
+        .toArray();
+      console.log(result);
+      res.send(result);
+    });
+    // cancle an order
+    app.delete("/orders/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const order = await ordersCollection.findOne(query);
+      if (order.status === "Delivered") {
+        return res
+          .status(409)
+          .send("Cannot cancle once the product is delivered");
+      }
+      const result = await ordersCollection.deleteOne(query);
       res.send(result);
     });
     // Send a ping to confirm a successful connection
