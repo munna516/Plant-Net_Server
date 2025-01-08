@@ -200,6 +200,30 @@ async function run() {
       const result = await ordersCollection.deleteOne(query);
       res.send(result);
     });
+
+    // Manage user status and role
+    app.patch("/users/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+      if (!user || user?.status === "Requested")
+        return res.status(400).send("Request Already sent");
+
+      const updateDoc = {
+        $set: {
+          status: "Requested",
+        },
+      };
+      const result = await usersCollection.updateOne(query, updateDoc);
+      res.send(result);
+    });
+
+    // Get role
+    app.get("/users/role/:email", async (req, res) => {
+      const email = req.params.email;
+      const result = await usersCollection.findOne({ email });
+      res.send({ role: result?.role });
+    });
     // Send a ping to confirm a successful connection
     await client.connect();
     await client.db("admin").command({ ping: 1 });
