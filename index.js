@@ -28,7 +28,6 @@ const verifyToken = async (req, res, next) => {
   }
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      console.log(err);
       return res.status(401).send({ message: "unauthorized access" });
     }
     req.user = decoded;
@@ -53,6 +52,29 @@ async function run() {
     const usersCollection = db.collection("users");
     const plantsCollection = db.collection("plants");
     const ordersCollection = db.collection("orders");
+
+    // Verify Admin Middleware
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.user?.email;
+      const query = { email };
+      const result = await usersCollection.findOne(query);
+      if (!result || result?.role !== "admin")
+        return res
+          .status(403)
+          .send({ message: "Forbidden Access! Admin only Actions" });
+      next();
+    };
+    // Verify seller Middleware
+    const verifySeller = async (req, res, next) => {
+      const email = req.user?.email;
+      const query = { email };
+      const result = await usersCollection.findOne(query);
+      if (!result || result?.role !== "seller")
+        return res
+          .status(403)
+          .send({ message: "Forbidden Access! Seller only Actions" });
+      next();
+    };
 
     // Generate jwt token
     app.post("/jwt", async (req, res) => {
@@ -100,7 +122,7 @@ async function run() {
       res.send(result);
     });
     // Save plant to the DB
-    app.post("/plants", async (req, res) => {
+    app.post("/plants", verifyToken, verifySeller, async (req, res) => {
       const plant = req.body;
       const result = await plantsCollection.insertOne(plant);
       res.send(result);
@@ -184,9 +206,56 @@ async function run() {
           },
         ])
         .toArray();
-      console.log(result);
       res.send(result);
     });
+
+    // Get all orders for a specific seller
+    app.get(
+      "/seller-orders/:email",
+      verifyToken,
+      verifySeller,
+      async (req, res) => {
+        const email = req.params.email;
+        const query = { seller: email };
+        const result = await ordersCollection
+          .aggregate([
+            {
+              $match: query, // Match specific data by email
+            },
+            {
+              $addFields: {
+                plantId: { $toObjectId: "$plantId" }, // convert  plantId (string) to object id
+              },
+            },
+            {
+              // Go to another collection for look data
+              $lookup: {
+                from: "plants",
+                localField: "plantId",
+                foreignField: "_id",
+                as: "plant",
+              },
+            },
+            {
+              $unwind: "$plant", // To remove the array
+            },
+            {
+              // Add this field only in order object
+              $addFields: {
+                name: "$plant.name",
+              },
+            },
+            {
+              // remove plant object only
+              $project: {
+                plant: 0,
+              },
+            },
+          ])
+          .toArray();
+        res.send(result);
+      }
+    );
     // cancle an order
     app.delete("/orders/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
@@ -219,10 +288,35 @@ async function run() {
     });
 
     // Get role
-    app.get("/users/role/:email", async (req, res) => {
+    app.get("/users/role/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       const result = await usersCollection.findOne({ email });
       res.send({ role: result?.role });
+    });
+
+    // Update a role
+    app.patch(
+      "/update/role/:email",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const email = req.params.email;
+        const { role } = req.body;
+        const filter = { email };
+        const updateDoc = {
+          $set: { role, status: "Verified" },
+        };
+        const result = await usersCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      }
+    );
+
+    // Get all user data
+    app.get("/all-users/:email", verifyToken, verifyAdmin, async (req, res) => {
+      const email = req.params.email;
+      const query = { email: { $ne: email } }; // select all user without this email
+      const result = await usersCollection.find(query).toArray();
+      res.send(result);
     });
     // Send a ping to confirm a successful connection
     await client.connect();
