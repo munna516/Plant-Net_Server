@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const nodemailer = require("nodemailer");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 // const morgan = require("morgan");
@@ -32,6 +33,40 @@ const verifyToken = async (req, res, next) => {
     }
     req.user = decoded;
     next();
+  });
+};
+
+//  Send email using nodemailer
+const sendEmail = (emailAddress, emailData) => {
+  // create tansporter
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // true for port 465, false for other ports
+    auth: {
+      user: process.env.NODEMAILER_USER,
+      pass: process.env.NODEMAILER_PASS,
+    },
+  });
+  transporter.verify((error, success) => {
+    if (error) {
+      console.log(error);
+    } else {
+      console.log("Transporter is ready to emails ", success);
+    }
+  });
+  const mailBody = {
+    from: process.env.NODEMAILER_USER, // sender address
+    to: emailAddress, // list of receivers
+    subject: emailData?.subject, // Subject line
+    html: `<p>${emailData?.message}</p>`, // html body
+  };
+  transporter.sendMail(mailBody, (error, info) => {
+    if (error) {
+      console.log(error);
+    } else {
+      console.log(info);
+    }
   });
 };
 
@@ -145,6 +180,17 @@ async function run() {
     app.post("/order", async (req, res) => {
       const orderInfo = req.body;
       const result = await ordersCollection.insertOne(orderInfo);
+      // Send email to customer
+      if (result?.insertedId) {
+        sendEmail(orderInfo?.customer?.email, {
+          subject: "Plant Order",
+          message: `You've palced an order successfully.Transaction Id: ${result?.insertedId}`,
+        });
+        sendEmail(orderInfo?.seller, {
+          subject: "Hurry!, You have an order to process",
+          message: `Get the plants ready for  ${orderInfo?.coustomer?.name}`,
+        });
+      }
       res.send(result);
     });
     // Manage Quantity
@@ -316,6 +362,17 @@ async function run() {
       const email = req.params.email;
       const query = { email: { $ne: email } }; // select all user without this email
       const result = await usersCollection.find(query).toArray();
+      res.send(result);
+    });
+    // update a order status
+    app.patch("/orders/:id", verifyToken, verifySeller, async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: { status },
+      };
+      const result = await ordersCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
     // Send a ping to confirm a successful connection
