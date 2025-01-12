@@ -375,6 +375,24 @@ async function run() {
       const result = await ordersCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
+
+    // Admin Stat
+    app.get("/admin-stat", verifyToken, verifyAdmin, async (req, res) => {
+      const totalUsers = await usersCollection.estimatedDocumentCount();
+      const totalPlants = await plantsCollection.estimatedDocumentCount();
+      const orderDetails = await ordersCollection
+        .aggregate([
+          {
+            $group: {
+              _id: null,
+              totalRevenue: { $sum: "$price" },
+              totalOrder: { $sum: 1 },
+            },
+          },
+        ])
+        .next();
+      res.send({ totalPlants, totalUsers, ...orderDetails });
+    });
     // Send a ping to confirm a successful connection
     await client.connect();
     await client.db("admin").command({ ping: 1 });
